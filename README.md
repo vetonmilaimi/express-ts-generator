@@ -7,7 +7,7 @@ Inspired by [express-generator](https://github.com/expressjs/generator).
 ## Features
 
 - **TypeScript Native**: Pre-configured `tsconfig.json`, source files in `src/`, and ES Modules imports.
-- **Modern Dev Tooling**: Live reloading using [tsx](https://github.com/privatenumber/tsx) (much faster than nodemon/ts-node-dev).
+- **Modern Dev Tooling**: Live reloading using [nodemon](https://github.com/remy/nodemon) and [ts-node](https://github.com/TypeStrong/ts-node) for seamless TypeScript execution.
 - **Environment Configuration**: Ready-to-go dotenv configuration.
 - **Cross-Platform Static Building**: Multi-platform node script for copying public assets & templates to `dist` for compilation.
 - **Multiple Options**: Supports CSS preprocessors (Sass, Less) and popular view engines (EJS, Pug, Handlebars).
