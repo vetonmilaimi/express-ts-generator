@@ -17,24 +17,50 @@ Inspired by [express-generator](https://github.com/expressjs/generator).
 
 ## Installation
 
-You can install the generator globally via npm:
+The package is published on npm as `@veton.milaimi/express-ts-generator` and exposes the `express-ts` command.
+
+Install it globally:
 
 ```bash
-npm install -g .
+npm install -g @veton.milaimi/express-ts-generator
 ```
 
-Or run it directly from the repository using the local path:
+Then generate a project:
 
 ```bash
-./bin/express-ts-generator [options] [dir]
+express-ts [options] [dir]
+```
+
+You can also run it without installing globally:
+
+```bash
+npx @veton.milaimi/express-ts-generator [options] [dir]
 ```
 
 ---
 
 ## Usage
 
+After global installation, use the CLI command:
+
 ```bash
 express-ts [options] [dir]
+```
+
+For one-off usage, prefix the same arguments with the package name:
+
+```bash
+npx @veton.milaimi/express-ts-generator [options] [dir]
+```
+
+Examples:
+
+```bash
+# Generate an API project in ./my-app
+express-ts --git --pm npm my-app
+
+# Or run directly from npm without a global install
+npx @veton.milaimi/express-ts-generator --ejs --css sass my-web-app
 ```
 
 ### Options
@@ -56,17 +82,24 @@ express-ts [options] [dir]
 
 ## Quick Start
 
-### 1. Scaffold a New API Project
+### 1. Create a New Project
 
 ```bash
-# Generate in a folder called my-app
-express-ts --git --pm npm my-app
+npx @veton.milaimi/express-ts-generator --git --pm npm my-app
 ```
 
-### 2. Scaffold a Project with View Engine (e.g., EJS) & Sass
+### 2. Start Development
 
 ```bash
-express-ts --ejs --css sass my-web-app
+cd my-app
+npm install
+npm run dev
+```
+
+### 3. Scaffold a Project with EJS and Sass
+
+```bash
+npx @veton.milaimi/express-ts-generator --ejs --css sass my-web-app
 ```
 
 ---
