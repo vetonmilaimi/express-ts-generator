@@ -1,0 +1,19 @@
+{
+  "name": "express-ts-generator",
+  "version": "1.0.0",
+  "description": "Express application generator with TypeScript support",
+  "author": "Veton Milaimi",
+  "license": "MIT",
+  "bin": {
+    "express-ts": "./bin/express-ts-generator"
+  },
+  "keywords": [
+    "express",
+    "typescript",
+    "generator",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

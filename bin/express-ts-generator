@@ -1,0 +1,854 @@
+#!/usr/bin/env bash
+
+# Exit immediately if a command exits with a non-zero status
+set -e
+
+VERSION="1.0.0"
+
+# Default values
+VIEW_ENGINE="none"
+CSS_ENGINE="css"
+GIT_INIT=false
+FORCE=false
+PACKAGE_MANAGER="npm"
+APP_DIR=""
+
+show_help() {
+  cat << EOF
+Usage: express-ts [options] [dir]
+
+Options:
+  -h, --help          output usage information
+      --version       output the version number
+  -e, --ejs           add ejs engine support
+      --pug           add pug engine support
+      --hbs           add handlebars engine support
+      --no-view       use static HTML instead of view engine (default)
+  -c, --css <engine>  add stylesheet engine support (css, sass, less) (default: css)
+  -g, --git           add .gitignore and initialize git repository
+  -f, --force         force on non-empty directory
+  -p, --pm <manager>  package manager: npm, yarn, pnpm, bun (default: npm)
+EOF
+}
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    --version)
+      echo "$VERSION"
+      exit 0
+      ;;
+    -e|--ejs)
+      VIEW_ENGINE="ejs"
+      shift
+      ;;
+    --pug)
+      VIEW_ENGINE="pug"
+      shift
+      ;;
+    --hbs)
+      VIEW_ENGINE="hbs"
+      shift
+      ;;
+    --no-view)
+      VIEW_ENGINE="none"
+      shift
+      ;;
+    -c|--css)
+      if [[ -z "$2" || "$2" =~ ^- ]]; then
+        echo "Error: --css requires an argument (css, sass, less)" >&2
+        exit 1
+      fi
+      CSS_ENGINE="$2"
+      shift 2
+      ;;
+    -g|--git)
+      GIT_INIT=true
+      shift
+      ;;
+    -f|--force)
+      FORCE=true
+      shift
+      ;;
+    -p|--pm)
+      if [[ -z "$2" || "$2" =~ ^- ]]; then
+        echo "Error: --pm requires an argument (npm, yarn, pnpm, bun)" >&2
+        exit 1
+      fi
+      PACKAGE_MANAGER="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      show_help
+      exit 1
+      ;;
+    *)
+      if [[ -n "$APP_DIR" ]]; then
+        echo "Error: Multiple directories specified: $APP_DIR and $1" >&2
+        exit 1
+      fi
+      APP_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+# Validate CSS engine
+if [[ "$CSS_ENGINE" != "css" && "$CSS_ENGINE" != "sass" && "$CSS_ENGINE" != "less" ]]; then
+  echo "Error: Invalid CSS engine: $CSS_ENGINE. Choose from: css, sass, less" >&2
+  exit 1
+fi
+
+# Validate Package Manager
+if [[ "$PACKAGE_MANAGER" != "npm" && "$PACKAGE_MANAGER" != "yarn" && "$PACKAGE_MANAGER" != "pnpm" && "$PACKAGE_MANAGER" != "bun" ]]; then
+  echo "Error: Invalid package manager: $PACKAGE_MANAGER. Choose from: npm, yarn, pnpm, bun" >&2
+  exit 1
+fi
+
+# Set default directory
+if [[ -z "$APP_DIR" ]]; then
+  APP_DIR="."
+fi
+
+# Resolve absolute path for directory
+ABS_APP_DIR=$(mkdir -p "$APP_DIR" && cd "$APP_DIR" && pwd)
+
+# Check if non-empty and not force
+if [ "$(ls -A "$ABS_APP_DIR" 2>/dev/null)" ] && [ "$FORCE" = false ]; then
+  echo "Error: destination directory is not empty. Use -f or --force to override." >&2
+  exit 1
+fi
+
+# Resolve app name
+APP_NAME=$(basename "$ABS_APP_DIR")
+if [[ "$APP_NAME" == "/" || -z "$APP_NAME" ]]; then
+  APP_NAME="express-ts-app"
+fi
+
+echo "Creating a new Express TypeScript project in $ABS_APP_DIR..."
+
+# Create directory structure
+mkdir -p "$ABS_APP_DIR/src/bin"
+mkdir -p "$ABS_APP_DIR/src/routes"
+mkdir -p "$ABS_APP_DIR/src/controllers"
+mkdir -p "$ABS_APP_DIR/src/public/images"
+mkdir -p "$ABS_APP_DIR/src/public/javascripts"
+mkdir -p "$ABS_APP_DIR/src/public/stylesheets"
+if [[ "$VIEW_ENGINE" != "none" ]]; then
+  mkdir -p "$ABS_APP_DIR/src/views"
+fi
+
+# ----------------- package.json -----------------
+DEPS='    "express": "^4.19.2",
+    "dotenv": "^16.4.5",
+    "cors": "^2.8.5",
+    "morgan": "^1.10.0",
+    "cookie-parser": "^1.4.6",
+    "debug": "^4.3.5",
+    "http-errors": "^2.0.0"'
+
+if [[ "$VIEW_ENGINE" == "ejs" ]]; then
+  DEPS="$DEPS,
+    \"ejs\": \"^3.1.10\""
+elif [[ "$VIEW_ENGINE" == "pug" ]]; then
+  DEPS="$DEPS,
+    \"pug\": \"^3.0.3\""
+elif [[ "$VIEW_ENGINE" == "hbs" ]]; then
+  DEPS="$DEPS,
+    \"hbs\": \"^4.2.0\""
+fi
+
+DEV_DEPS='    "typescript": "^5.4.5",
+    "@types/node": "^20.14.2",
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/morgan": "^1.9.9",
+    "@types/cookie-parser": "^1.4.7",
+    "@types/debug": "^4.1.12",
+    "@types/http-errors": "^2.0.4",
+    "tsx": "^4.15.2"'
+
+EXTRA_SCRIPTS=""
+BUILD_SCRIPT="tsc && node copy-static.js"
+DEV_SCRIPT="tsx watch src/bin/www.ts"
+
+if [[ "$CSS_ENGINE" == "sass" ]]; then
+  DEV_DEPS="$DEV_DEPS,
+    \"sass\": \"^1.77.4\",
+    \"concurrently\": \"^8.2.2\""
+  EXTRA_SCRIPTS=',
+    "build:sass": "sass src/public/stylesheets/style.scss src/public/stylesheets/style.css --no-source-map"'
+  BUILD_SCRIPT="npm run build:sass && tsc && node copy-static.js"
+  DEV_SCRIPT="concurrently \\\"sass src/public/stylesheets/style.scss src/public/stylesheets/style.css --watch --no-source-map\\\" \\\"tsx watch src/bin/www.ts\\\""
+elif [[ "$CSS_ENGINE" == "less" ]]; then
+  DEV_DEPS="$DEV_DEPS,
+    \"less\": \"^4.2.0\",
+    \"concurrently\": \"^8.2.2\""
+  EXTRA_SCRIPTS=',
+    "build:less": "lessc src/public/stylesheets/style.less src/public/stylesheets/style.css"'
+  BUILD_SCRIPT="npm run build:less && tsc && node copy-static.js"
+  DEV_SCRIPT="concurrently \\\"nodemon -e less --watch src/public/stylesheets --exec lessc src/public/stylesheets/style.less src/public/stylesheets/style.css\\\" \\\"tsx watch src/bin/www.ts\\\""
+fi
+
+cat << EOF > "$ABS_APP_DIR/package.json"
+{
+  "name": "$APP_NAME",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "$BUILD_SCRIPT",
+    "start": "node dist/bin/www.js",
+    "dev": "$DEV_SCRIPT"$EXTRA_SCRIPTS
+  },
+  "dependencies": {
+$DEPS
+  },
+  "devDependencies": {
+$DEV_DEPS
+  }
+}
+EOF
+
+# ----------------- tsconfig.json -----------------
+cat << 'EOF' > "$ABS_APP_DIR/tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["es2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"]
+}
+EOF
+
+# ----------------- copy-static.js -----------------
+cat << 'EOF' > "$ABS_APP_DIR/copy-static.js"
+const fs = require('fs');
+const path = require('path');
+
+function copyDir(src, dest) {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(dest, { recursive: true });
+  let entries = fs.readdirSync(src, { withFileTypes: true });
+
+  for (let entry of entries) {
+    let srcPath = path.join(src, entry.name);
+    let destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDir(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+copyDir('src/public', 'dist/public');
+if (fs.existsSync('src/views')) {
+  copyDir('src/views', 'dist/views');
+}
+EOF
+
+# ----------------- .env -----------------
+cat << EOF > "$ABS_APP_DIR/.env"
+PORT=3000
+NODE_ENV=development
+EOF
+
+# ----------------- .gitignore -----------------
+cat << 'EOF' > "$ABS_APP_DIR/.gitignore"
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Build directory
+dist/
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Editor directories and files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+EOF
+
+# ----------------- src/bin/www.ts -----------------
+cat << EOF > "$ABS_APP_DIR/src/bin/www.ts"
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+import app from '../app';
+import debugLib from 'debug';
+import http from 'http';
+
+const debug = debugLib('$APP_NAME:server');
+
+/**
+ * Get port from environment and store in Express.
+ */
+const port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+const server = http.createServer(app);
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+function normalizePort(val: string): number | string | boolean {
+  const port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+function onError(error: NodeJS.ErrnoException): void {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  const bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+function onListening(): void {
+  const addr = server.address();
+  const bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : addr
+      ? 'port ' + addr.port
+      : 'unknown address';
+  debug('Listening on ' + bind);
+}
+EOF
+
+# ----------------- src/app.ts Setup -----------------
+VIEW_ENGINE_SETUP=""
+ERROR_HANDLER_RESPONSE=""
+
+if [[ "$VIEW_ENGINE" != "none" ]]; then
+  VIEW_ENGINE_SETUP="app.set('views', path.join(__dirname, 'views'));
+app.set('view engine', '$VIEW_ENGINE');"
+  ERROR_HANDLER_RESPONSE="res.render('error');"
+else
+  ERROR_HANDLER_RESPONSE="res.json({
+    message: err.message,
+    error: req.app.get('env') === 'development' ? err : {}
+  });"
+fi
+
+cat << EOF > "$ABS_APP_DIR/src/app.ts"
+import createError from 'http-errors';
+import express, { Request, Response, NextFunction } from 'express';
+import path from 'path';
+import cookieParser from 'cookie-parser';
+import logger from 'morgan';
+import cors from 'cors';
+import dotenv from 'dotenv';
+
+import indexRouter from './routes/index';
+import usersRouter from './routes/users';
+
+// Load environment variables
+dotenv.config();
+
+const app = express();
+
+$VIEW_ENGINE_SETUP
+
+app.use(cors());
+app.use(logger('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.use('/', indexRouter);
+app.use('/users', usersRouter);
+
+// catch 404 and forward to error handler
+app.use((req: Request, res: Response, next: NextFunction) => {
+  next(createError(404));
+});
+
+// error handler
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  // set locals, only providing error in development
+  res.locals.message = err.message;
+  res.locals.error = req.app.get('env') === 'development' ? err : {};
+
+  // render the error page
+  res.status(err.status || 500);
+  $ERROR_HANDLER_RESPONSE
+});
+
+export default app;
+EOF
+
+# ----------------- src/controllers/index.controller.ts -----------------
+ROUTE_INDEX_RESPONSE=""
+if [[ "$VIEW_ENGINE" != "none" ]]; then
+  ROUTE_INDEX_RESPONSE="res.render('index', { title: 'Express' });"
+else
+  ROUTE_INDEX_RESPONSE="res.json({ message: 'Welcome to the Express TypeScript API!' });"
+fi
+
+cat << EOF > "$ABS_APP_DIR/src/controllers/index.controller.ts"
+import { Request, Response, NextFunction } from 'express';
+
+/**
+ * GET home page.
+ */
+export const getHome = (req: Request, res: Response, next: NextFunction): void => {
+  $ROUTE_INDEX_RESPONSE
+};
+EOF
+
+# ----------------- src/controllers/users.controller.ts -----------------
+cat << 'EOF' > "$ABS_APP_DIR/src/controllers/users.controller.ts"
+import { Request, Response, NextFunction } from 'express';
+
+/**
+ * GET users listing.
+ */
+export const getUsers = (req: Request, res: Response, next: NextFunction): void => {
+  res.send('respond with a resource');
+};
+EOF
+
+# ----------------- src/routes/index.ts -----------------
+cat << 'EOF' > "$ABS_APP_DIR/src/routes/index.ts"
+import express from 'express';
+import { getHome } from '../controllers/index.controller';
+
+const router = express.Router();
+
+/* GET home page. */
+router.get('/', getHome);
+
+export default router;
+EOF
+
+# ----------------- src/routes/users.ts -----------------
+cat << 'EOF' > "$ABS_APP_DIR/src/routes/users.ts"
+import express from 'express';
+import { getUsers } from '../controllers/users.controller';
+
+const router = express.Router();
+
+/* GET users listing. */
+router.get('/', getUsers);
+
+export default router;
+EOF
+
+# ----------------- src/public/stylesheets/style.css/scss/less -----------------
+if [[ "$CSS_ENGINE" == "sass" ]]; then
+  STYLE_FILE="$ABS_APP_DIR/src/public/stylesheets/style.scss"
+elif [[ "$CSS_ENGINE" == "less" ]]; then
+  STYLE_FILE="$ABS_APP_DIR/src/public/stylesheets/style.less"
+else
+  STYLE_FILE="$ABS_APP_DIR/src/public/stylesheets/style.css"
+fi
+
+cat << 'EOF' > "$STYLE_FILE"
+:root {
+  --bg-color: #0b0f19;
+  --text-color: #f3f4f6;
+  --text-muted: #9ca3af;
+  --primary-color: #3b82f6;
+  --primary-glow: rgba(59, 130, 246, 0.5);
+  --card-bg: rgba(255, 255, 255, 0.03);
+  --card-border: rgba(255, 255, 255, 0.08);
+  --success-color: #10b981;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.container {
+  text-align: center;
+  max-width: 600px;
+  padding: 2.5rem;
+  border-radius: 24px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  animation: fadeIn 0.8s ease-out;
+}
+
+h1 {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  margin-bottom: 2rem;
+}
+
+.status-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 0.75rem 1.5rem;
+  border-radius: 9999px;
+  font-size: 0.95rem;
+  color: #34d399;
+  margin-bottom: 2rem;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  background-color: var(--success-color);
+  border-radius: 50%;
+  box-shadow: 0 0 12px var(--success-color);
+  animation: pulse 2s infinite;
+}
+
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  font-weight: 600;
+  color: white;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  border: none;
+  border-radius: 12px;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(59, 130, 246, 0.5);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+EOF
+
+# ----------------- Default View Files (if any) -----------------
+if [[ "$VIEW_ENGINE" == "ejs" ]]; then
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/index.ejs"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= title %></title>
+    <link rel='stylesheet' href='/stylesheets/style.css' />
+  </head>
+  <body>
+    <div class="container">
+      <h1><%= title %> & TypeScript</h1>
+      <p class="subtitle">Welcome to your modern Express application skeleton (rendered with EJS)</p>
+      <div class="status-card">
+        <span class="status-dot"></span>
+        <span>Server is running successfully</span>
+      </div>
+      <div class="actions">
+        <a href="/users" class="btn">Test Users Route</a>
+      </div>
+    </div>
+  </body>
+</html>
+EOF
+
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/error.ejs"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= message %></title>
+    <link rel='stylesheet' href='/stylesheets/style.css' />
+  </head>
+  <body>
+    <div class="container">
+      <h1><%= message %></h1>
+      <h2><%= error.status %></h2>
+      <pre style="text-align: left; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;"><%= error.stack %></pre>
+    </div>
+  </body>
+</html>
+EOF
+
+elif [[ "$VIEW_ENGINE" == "pug" ]]; then
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/layout.pug"
+doctype html
+html
+  head
+    title= title
+    link(rel='stylesheet', href='/stylesheets/style.css')
+  body
+    block content
+EOF
+
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/index.pug"
+extends layout
+
+block content
+  div.container
+    h1= title + " & TypeScript"
+    p.subtitle Welcome to your modern Express application skeleton (rendered with Pug)
+    div.status-card
+      span.status-dot
+      span Server is running successfully
+    div.actions
+      a.btn(href="/users") Test Users Route
+EOF
+
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/error.pug"
+extends layout
+
+block content
+  div.container
+    h1= message
+    h2= error.status
+    pre(style="text-align: left; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;") #{error.stack}
+EOF
+
+elif [[ "$VIEW_ENGINE" == "hbs" ]]; then
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/layout.hbs"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{{title}}</title>
+    <link rel='stylesheet' href='/stylesheets/style.css' />
+  </head>
+  <body>
+    {{{body}}}
+  </body>
+</html>
+EOF
+
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/index.hbs"
+<div class="container">
+  <h1>{{title}} & TypeScript</h1>
+  <p class="subtitle">Welcome to your modern Express application skeleton (rendered with Handlebars)</p>
+  <div class="status-card">
+    <span class="status-dot"></span>
+    <span>Server is running successfully</span>
+  </div>
+  <div class="actions">
+    <a href="/users" class="btn">Test Users Route</a>
+  </div>
+</div>
+EOF
+
+  cat << 'EOF' > "$ABS_APP_DIR/src/views/error.hbs"
+<div class="container">
+  <h1>{{message}}</h1>
+  <h2>{{error.status}}</h2>
+  <pre style="text-align: left; background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">{{error.stack}}</pre>
+</div>
+EOF
+
+else
+  # Write index.html for API mode (no-view)
+  cat << 'EOF' > "$ABS_APP_DIR/src/public/index.html"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Express TypeScript API</title>
+    <link rel="stylesheet" href="/stylesheets/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>Express & TypeScript</h1>
+      <p class="subtitle">Welcome to your modern Express application skeleton</p>
+      <div class="status-card">
+        <span class="status-dot"></span>
+        <span>API Server is running successfully</span>
+      </div>
+      <div class="actions">
+        <a href="/users" class="btn">Test Users Route</a>
+      </div>
+    </div>
+  </body>
+</html>
+EOF
+fi
+
+# ----------------- Git Init -----------------
+if [ "$GIT_INIT" = true ]; then
+  if command -v git >/dev/null 2>&1; then
+    echo "Initializing git repository..."
+    (
+      cd "$ABS_APP_DIR"
+      git init
+      git add .
+      git commit -m "Initial commit from Express TypeScript Generator"
+    ) >/dev/null 2>&1 || echo "Warning: Failed to initialize git repository."
+  else
+    echo "Warning: git command not found. Skipping repository initialization."
+  fi
+fi
+
+# ----------------- Output Setup instructions -----------------
+echo ""
+echo "   Express TypeScript application generated successfully in:"
+echo "   $ABS_APP_DIR"
+echo ""
+echo "   Change directory:"
+echo "     cd $APP_DIR"
+echo ""
+echo "   Install dependencies:"
+if [[ "$PACKAGE_MANAGER" == "npm" ]]; then
+  echo "     npm install"
+  echo ""
+  echo "   Start the development server:"
+  echo "     npm run dev"
+  echo ""
+  echo "   Build the application:"
+  echo "     npm run build"
+  echo ""
+  echo "   Start the compiled application:"
+  echo "     npm start"
+elif [[ "$PACKAGE_MANAGER" == "yarn" ]]; then
+  echo "     yarn install"
+  echo ""
+  echo "   Start the development server:"
+  echo "     yarn dev"
+  echo ""
+  echo "   Build the application:"
+  echo "     yarn build"
+  echo ""
+  echo "   Start the compiled application:"
+  echo "     yarn start"
+elif [[ "$PACKAGE_MANAGER" == "pnpm" ]]; then
+  echo "     pnpm install"
+  echo ""
+  echo "   Start the development server:"
+  echo "     pnpm dev"
+  echo ""
+  echo "   Build the application:"
+  echo "     pnpm build"
+  echo ""
+  echo "   Start the compiled application:"
+  echo "     pnpm start"
+elif [[ "$PACKAGE_MANAGER" == "bun" ]]; then
+  echo "     bun install"
+  echo ""
+  echo "   Start the development server:"
+  echo "     bun dev"
+  echo ""
+  echo "   Build the application:"
+  echo "     bun build"
+  echo ""
+  echo "   Start the compiled application:"
+  echo "     bun start"
+fi
+echo ""
