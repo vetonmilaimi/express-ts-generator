@@ -1,5 +1,5 @@
 {
-  "name": "express-veton-ts-generator",
+  "name": "@veton.milaimi/express-ts-generator",
   "version": "1.0.0",
   "description": "Express application generator with TypeScript support",
   "author": "Veton Milaimi",
