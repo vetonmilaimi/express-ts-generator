@@ -28,7 +28,7 @@ Options:
   -g, --git           add .gitignore and initialize git repository
   -f, --force         force on non-empty directory
   -p, --pm <manager>  package manager: npm, yarn, pnpm, bun (default: npm)
-  
+
   Builded by: Veton Milaimi
 EOF
 }
